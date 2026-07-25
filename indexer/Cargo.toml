@@ -1,11 +1,11 @@
 [package]
-name = "codebase-mcp"
+name = "paldeck-mcp"
 version = "0.2.0"
 edition = "2021"
-description = "Single-binary codebase indexer + MCP server. Index your code, serve it to AI agents. Python, TypeScript, Rust, Go."
+description = "Paldeck MCP — single-binary codebase indexer + MCP server. Index your code, serve it to AI agents. Python, TypeScript, Rust, Go."
 
 [[bin]]
-name = "codebase-mcp"
+name = "paldeck-mcp"
 path = "src/main.rs"
 
 [dependencies]

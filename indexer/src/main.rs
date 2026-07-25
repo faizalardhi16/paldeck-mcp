@@ -1,8 +1,8 @@
-//! # Codebase MCP — Single binary for indexing + serving
+//! # Paldeck MCP — Single binary for indexing + serving
 //!
 //! Two modes:
-//!   codebase-mcp index --project /path   → build SQLite knowledge graph
-//!   codebase-mcp serve                   → start MCP server (reads index.db)
+//!   paldeck-mcp index --project /path   → build SQLite knowledge graph
+//!   paldeck-mcp serve                   → start MCP server (reads index.db)
 
 mod walker;
 mod parser;
@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "codebase-mcp", about = "Single-binary codebase indexer + MCP server")]
+#[command(name = "paldeck-mcp", about = "Paldeck MCP — single-binary codebase indexer + MCP server")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
