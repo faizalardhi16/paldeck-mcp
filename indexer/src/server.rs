@@ -49,7 +49,12 @@ pub struct FilePathParams {
     pub file_path: String,
 }
 
-// ── Output types ──────────────────────────────────────────────────
+#[derive(Deserialize, JsonSchema)]
+pub struct ReindexParams {
+    /// Re-index only files under this subdirectory. Omit for full reindex.
+    #[serde(default)]
+    pub scope: Option<String>,
+}
 
 #[derive(Serialize, JsonSchema)]
 pub struct SymbolRow {
@@ -328,21 +333,24 @@ impl AppState {
         Json(serde_json::to_string_pretty(&output).unwrap_or_default())
     }
 
-    #[tool(name = "reindex", description = "Re-run the indexer to pick up code changes.")]
-    fn reindex(&self) -> Json<String> {
+    #[tool(name = "reindex", description = "Re-run the indexer to pick up code changes. Use scope to index only a specific subdirectory (e.g., 'src/auth'). Omit scope for full project reindex.")]
+    fn reindex(&self, Parameters(p): Parameters<ReindexParams>) -> Json<String> {
         let db_path = self.db_path.clone();
         drop(self.conn.lock().unwrap());
 
         let parent = db_path
             .parent()
             .unwrap_or(std::path::Path::new("."));
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("codebase-mcp"));
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("paldeck-mcp"));
 
-        match std::process::Command::new(&exe)
-            .args(["index", "--project"])
-            .arg(parent)
-            .output()
-        {
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.args(["index", "--project"]).arg(parent);
+
+        if let Some(ref scope) = p.scope {
+            cmd.arg("--scope").arg(scope);
+        }
+
+        match cmd.output() {
             Ok(out) => {
                 let msg = String::from_utf8_lossy(&out.stdout).to_string();
                 if let Ok(new_conn) = rusqlite::Connection::open(&db_path) {
@@ -351,7 +359,7 @@ impl AppState {
                 Json(msg)
             }
             Err(e) => Json(format!(
-                "Reindex failed: {}. Run 'codebase-mcp index --project <path>' manually.",
+                "Reindex failed: {}. Run 'paldeck-mcp index --project <path>' manually.",
                 e
             )),
         }
@@ -372,9 +380,9 @@ pub async fn run_server(
     };
 
     let transport = (tokio::io::stdin(), tokio::io::stdout());
-    eprintln!("[codebase-mcp] MCP server starting on stdio...");
+    eprintln!("[paldeck-mcp] MCP server starting on stdio...");
     let service = state.serve(transport).await?;
-    eprintln!("[codebase-mcp] Connected. 7 tools registered.");
+    eprintln!("[paldeck-mcp] Connected. 8 tools registered.");
     service.waiting().await;
     Ok(())
 }
