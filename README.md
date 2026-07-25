@@ -1,14 +1,12 @@
-# Codebase MCP — Hybrid Rust+Python
+# Paldeck MCP — Single-Binary Codebase Indexer + MCP Server
 
-**4-language codebase indexer as MCP server.** Like [CBM](https://github.com/DeusData/codebase-memory-mcp), but hackable.
+**Index your codebase into a queryable knowledge graph. Expose it as MCP tools any AI agent can call.** Like [CBM](https://github.com/DeusData/codebase-memory-mcp), but 9MB, hackable, and yours.
 
-## Why?
+## Why
 
-AI coding tools don't know which file to touch. This indexes your codebase into a queryable knowledge graph, then exposes it as MCP tools that any agent (Cursor, Codex, Claude Code, Hermes) can call.
+AI coding tools don't know which file to touch. Paldeck MCP indexes your codebase into a SQLite knowledge graph and serves it over MCP — so your agent instantly knows where every function, class, and call edge lives.
 
-Unlike CBM (single-maintainer C binary, 100MB+), this splits the problem:
-- **Rust** indexer: single 7MB binary, tree-sitter AST parsing, zero dependencies
-- **Python** MCP server: fast iteration, 7 focused tools, optional NetworkX enrichment
+**Single binary. Zero dependencies.** Download `paldeck-mcp.exe`, put it on PATH, done.
 
 ## Languages Supported
 
@@ -16,93 +14,99 @@ Unlike CBM (single-maintainer C binary, 100MB+), this splits the problem:
 |----------|-----------|-------------------|
 | Python | `.py` | functions, classes, methods, imports, calls |
 | TypeScript/JS | `.ts` `.tsx` `.js` `.jsx` | functions, classes, methods, imports, calls |
-| Rust | `.rs` | functions, structs, calls |
+| Rust | `.rs` | functions, structs, traits, impls, calls |
 | Go | `.go` | functions, methods, structs, interfaces, imports, calls |
 
 ## Quick Start
 
-### 1. Build the indexer (requires Rust)
+### 1. Download
+
+**Windows:**
+```powershell
+mkdir "$env:USERPROFILE\tools" -Force
+Invoke-WebRequest -Uri "https://github.com/faizalardhi16/paldeck-mcp/releases/download/v0.2.0/paldeck-mcp.exe" -OutFile "$env:USERPROFILE\tools\paldeck-mcp.exe"
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\tools", "User")
+```
+
+**Linux/macOS (build from source):**
 ```bash
-cd indexer
+git clone https://github.com/faizalardhi16/paldeck-mcp.git
+cd paldeck-mcp
 cargo build --release
-# Output: target/release/codebase-indexer (~7MB single binary)
+sudo ln -s $(pwd)/target/release/paldeck-mcp /usr/local/bin/
 ```
 
 ### 2. Index your project
+
 ```bash
-codebase-indexer --project /path/to/your/project
-# Creates: /path/to/your/project/index.db
+paldeck-mcp index --project /path/to/your/project
+# → index.db created in project root
 ```
 
-### 3. Run the MCP server
+### 3. Start the MCP server
+
 ```bash
-cd server
-pip install mcp
-python -m server
+paldeck-mcp serve
+# → MCP server running on stdio — connect your agent
 ```
 
-### 4. Connect to your agent
+### 4. Connect your agent
 
-**Cursor** (`~/.cursor/mcp.json`):
+Drop this into your MCP config:
+
 ```json
-{ "mcpServers": { "codebase": { "command": "python", "args": ["-m", "server"], "cwd": "/path/to/server/src", "env": { "PROJECT_ROOT": "/path/to/project" } } } }
+{"mcpServers": {"paldeck": {"command": "paldeck-mcp", "args": ["serve"]}}}
 ```
 
-**Codex CLI** (`~/.codex/config.toml`):
-```toml
-[mcp_servers.codebase]
-command = "python"
-args = ["-m", "server"]
-cwd = "/path/to/server/src"
-env = { PROJECT_ROOT = "/path/to/project" }
-```
+Works with **Cursor**, **Codex CLI**, **Claude Code**, and **Hermes Agent**. See [`INTEGRATION.md`](INTEGRATION.md) for platform-specific configs.
 
-**Claude Code** (`~/.claude/mcp.json`):
-```json
-{ "mcpServers": { "codebase": { "command": "python", "args": ["-m", "server"], "cwd": "/path/to/server/src", "env": { "PROJECT_ROOT": "/path/to/project" } } } }
-```
+## MCP Tools (7)
 
-**Hermes** (`~/.hermes/config.yaml`):
-```yaml
-mcp_servers:
-  codebase:
-    command: "python"
-    args: ["-m", "server"]
-    cwd: "/path/to/server/src"
-    env:
-      PROJECT_ROOT: "/path/to/project"
-```
-
-## MCP Tools
-
-| Tool | What it does |
+| Tool | Description |
 |------|-------------|
-| `search_symbol` | Find functions/classes by name (exact or fuzzy) |
-| `trace_callers` | Who calls this function? (inbound call graph, recursive depth supported) |
-| `trace_callees` | What does this function call? (outbound call graph) |
-| `get_architecture` | All symbols in a module, grouped by kind |
-| `list_symbols_in_file` | Every symbol in a file, ordered by line |
-| `index_status` | Stats: file count, symbol count, last indexed |
-| `reindex` | Re-run indexer to pick up code changes |
+| `search_symbols` | Find functions/classes by name (exact + fuzzy) |
+| `get_symbol` | Full info for a symbol: signature, docstring, location |
+| `find_definition` | Jump to a symbol's definition |
+| `find_references` | Every call site that references this symbol |
+| `find_callers` | Who calls this function? (recursive depth supported) |
+| `list_files` | All source files discovered during indexing |
+| `get_file_summary` | All symbols in a file, grouped by kind |
 
 ## Architecture
 
 ```
-Rust indexer (AST parsing, petgraph, SQLite)  →  index.db  ←  Python MCP server (query, tools)
+paldeck-mcp
+├── paldeck-mcp index --project /repo   → tree-sitter AST parsing → index.db (SQLite)
+└── paldeck-mcp serve                    → reads index.db → MCP stdio server
 ```
 
-See `EXPLANATION.md` for the full architecture walkthrough.
-See `INTEGRATION.md` for detailed agent setup.
-See `WINDOWS.md` for Windows-specific instructions.
+Single Rust binary. Tree-sitter handles parsing (Python, TypeScript, Rust, Go grammars bundled). `petgraph` builds the in-memory call graph. `rusqlite` persists it. `rmcp` serves the MCP protocol over stdio.
 
-## Windows Users
+## Comparison: Paldeck vs CBM
 
-Pre-built binary available in [Releases](https://github.com/faizalardhi16/codebase-mcp/releases).
+| | CBM | Paldeck MCP |
+|---|---|---|
+| Binary size | 100-150MB (158 languages) | **9MB** (4 languages) |
+| Runtime deps | Zero | **Zero** |
+| Single binary? | ✅ | ✅ |
+| Languages | 158 | 4 (add more via tree-sitter grammars) |
+| Codebase | C (hard to extend) | **Rust** (tree-sitter native, ergonomic) |
+| MCP tools | 15 (ADR, cross-service, etc.) | **7 focused** (call graph core) |
+| Maintainer risk | Solo volunteer | **Your code, your team** |
 
-Download `codebase-indexer.exe` (7MB, single file), then:
-```powershell
-codebase-indexer.exe --project C:\path\to\project
-```
+## Extending
+
+### Add a language
+1. Add tree-sitter grammar to `Cargo.toml`
+2. Write a `parse_<lang>()` function in `src/parser.rs` using S-expression queries
+3. Add the extension to `SUPPORTED_EXTENSIONS` in `src/walker.rs`
+
+### Add an MCP tool
+1. Define the tool schema in `src/server.rs`
+2. Implement the handler calling into the query engine
+3. Rebuild — `cargo build --release`
+
+No Python. No separate server. Everything lives in one binary.
 
 ## License
 

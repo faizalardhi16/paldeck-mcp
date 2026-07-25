@@ -1,43 +1,43 @@
-# Codebase Indexer — Windows Local Test
+# Paldeck MCP — Windows Setup
 
-## Yang lo butuhin
+**1 file. 9MB. Zero dependencies.**
 
-Lo tinggal download **1 file** — `codebase-indexer.exe` — single binary, nggak butuh install Python atau Rust.
+No Python, no Rust toolchain, no pip install. Just download `paldeck-mcp.exe` and go.
 
-## Step 1: Download binary
-
-Dari Linux server ini, binary-nya di:
-```
-/root/codebase-mcp-hybrid/indexer/target/x86_64-pc-windows-gnu/release/codebase-indexer.exe
-```
-
-Copy ke Windows lo. Simpan di folder yang enak, misalnya:
-```
-C:\Users\faizal.cahyanto-iu\tools\codebase-indexer.exe
-```
-
-## Step 2: Add to PATH (opsional, biar bisa dipanggil dari mana aja)
-
-PowerShell (non-admin):
-```powershell
-[Environment]::SetEnvironmentVariable("Path", $env:Path + ";C:\Users\faizal.cahyanto-iu\tools", "User")
-```
-
-Atau tanpa PATH — panggil langsung dengan full path:
-```powershell
-C:\Users\faizal.cahyanto-iu\tools\codebase-indexer.exe --project C:\path\to\project
-```
-
-## Step 3: Test di project lo
+## Step 1: Download
 
 ```powershell
-# Buka PowerShell / CMD, arahkan ke project yang mau di-index
+# Create tools directory
+mkdir "$env:USERPROFILE\tools" -Force
+
+# Download the binary
+Invoke-WebRequest -Uri "https://github.com/faizalardhi16/paldeck-mcp/releases/download/v0.2.0/paldeck-mcp.exe" -OutFile "$env:USERPROFILE\tools\paldeck-mcp.exe"
+```
+
+## Step 2: Add to PATH (optional)
+
+```powershell
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:USERPROFILE\tools", "User")
+```
+
+Restart your terminal, then:
+
+```powershell
+paldeck-mcp --help
+```
+
+Or skip PATH and use the full path:
+```powershell
+C:\Users\faizal.cahyanto-iu\tools\paldeck-mcp.exe index --project .
+```
+
+## Step 3: Index your project
+
+```powershell
 cd C:\path\to\your\project
+paldeck-mcp index --project .
 
-# Jalankan indexer
-codebase-indexer --project .
-
-# Output yang diharapkan:
+# Expected output:
 # 🔍 Walking project: C:\path\to\your\project
 #    Found 87 source files
 #    src\main.py → 12 symbols, 8 edges
@@ -47,57 +47,61 @@ codebase-indexer --project .
 # 💾 Persisted to C:\path\to\your\project\index.db
 ```
 
-Hasilnya: `index.db` muncul di root project lo.
+Result: `index.db` appears in your project root.
 
-## Step 4: Cek isinya (optional)
+## Step 4: Connect to your AI agent
 
-Bisa dibuka pake SQLite browser (https://sqlitebrowser.org/) untuk verifikasi:
-```
-symbols table → semua function, class, method yang ke-extract
-edges table   → call relationships
-meta table    → statistik indexing
-```
+Add this to your MCP config:
 
-## Step 5: Kalau mau connect ke Codex CLI
-
-Setelah index.db ada, baru MCP server bisa connect. Install Python + MCP di Windows:
-
-```powershell
-# Install Python 3.11+ dari python.org kalau belum ada
-# Lalu:
-pip install mcp
-
-# Copy folder server dari Linux ke Windows:
-# /root/codebase-mcp-hybrid/server/ → C:\Users\faizal.cahyanto-iu\tools\codebase-server\
+```json
+{"mcpServers": {"paldeck": {"command": "paldeck-mcp", "args": ["serve"]}}}
 ```
 
-Config Codex (`%USERPROFILE%\.codex\config.toml`):
-```toml
-[mcp_servers.codebase]
-command = "python"
-args = ["-m", "server"]
-cwd = "C:\\Users\\faizal.cahyanto-iu\\tools\\codebase-server\\src"
-env = { PROJECT_ROOT = "C:\\path\\to\\your\\project" }
+Or with full path:
+```json
+{"mcpServers": {"paldeck": {"command": "C:\\Users\\faizal.cahyanto-iu\\tools\\paldeck-mcp.exe", "args": ["serve"]}}}
 ```
 
-## Catatan
+Works with **Cursor**, **Codex CLI**, and **Claude Code**. See [`INTEGRATION.md`](INTEGRATION.md) for platform-specific config locations.
 
-- **Binary ini untuk Windows x64**. Kalau laptop lo ARM (Snapdragon), bilang gue — perlu cross-compile target lain.
-- File `.exe` sekitar **15-25MB**. Single file, nggak ada dependency.
-- Bisa di-copy ke project manapun. Tinggal jalanin `codebase-indexer --project .` di root project itu.
+## Step 5: Verify (optional)
+
+Open `index.db` with [DB Browser for SQLite](https://sqlitebrowser.org/) to inspect:
+
+| Table | Contents |
+|-------|----------|
+| `symbols` | All functions, classes, methods extracted |
+| `edges` | Call relationships between symbols |
+| `meta` | Indexing stats (file count, symbol count, timestamp) |
 
 ---
 
-## Troubleshooting Windows
+## Troubleshooting
 
 ### "VCRUNTIME140.dll not found"
+
 Install Visual C++ Redistributable:
 ```
 https://aka.ms/vs/17/release/vc_redist.x64.exe
 ```
 
-### "Access denied" pas jalanin .exe
-Klik kanan → Properties → Unblock (kalau ada checkbox Unblock di bagian bawah)
+### "Access denied" when running .exe
 
-### Anti-virus blocking
-Windows Defender kadang nge-flag binary baru. Upload ke VirusTotal dulu kalau mau verifikasi.
+Right-click `paldeck-mcp.exe` → Properties → **Unblock** (checkbox at the bottom of the General tab).
+
+### Windows Defender / SmartScreen blocks the binary
+
+This is expected for a new, unsigned binary. Either:
+- Click "More info" → "Run anyway" when the SmartScreen popup appears
+- Add `C:\Users\<you>\tools` as a Defender exclusion
+- Upload to [VirusTotal](https://www.virustotal.com) to verify
+
+### Binary doesn't run on ARM (Snapdragon) laptops
+
+The current build targets `x86_64` (Intel/AMD). ARM64 builds can be added — file an issue or build from source:
+
+```bash
+git clone https://github.com/faizalardhi16/paldeck-mcp.git
+cd paldeck-mcp
+cargo build --release --target aarch64-pc-windows-msvc
+```

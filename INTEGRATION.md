@@ -1,337 +1,192 @@
 # Integration Guide — Cursor, Codex CLI, Claude Code, Hermes
 
-## Binary Situation: This vs CBM
-
-**Short answer:** Rust indexer ✅ single binary. MCP server ❌ needs Python.
-
-```
-codebase-indexer (Rust)         →  single static binary ~15-30MB  ✓ seperti CBM
-codebase-mcp-server (Python)    →  butuh Python 3.11+ + mcp       ✗ tidak seperti CBM
-```
-
-| | CBM | This (Hybrid) |
-|---|---|---|
-| **Indexer** | C binary (100-150MB) | Rust binary (15-30MB) |
-| **MCP server** | Embedded in binary (C + libmicrohttpd?) | Python (`mcp` package) |
-| **Runtime deps** | Zero | Python 3.11+ + `pip install mcp` |
-| **Single file?** | ✅ Ya | ❌ Dua komponen |
-
-### Kenapa nggak satu binary?
-
-Karena trade-off yang lo pilih: **indexer di Rust** (performa parsing) + **server di Python** (iterasi cepat buat tools). SQLite jadi jembatannya.
-
-### Opsi untuk jadi single binary
-
-**Opsi A: Rewrite MCP server di Rust**
-```toml
-# indexer/Cargo.toml — tambahin
-rmcp = "0.3"   # Rust MCP SDK
-```
-Pindahin semua `server.py` → Rust module. 1 binary, 2 commands:
-```bash
-codebase-mcp index  --project /repo    # indexing
-codebase-mcp serve                     # MCP server (reads index.db)
-```
-Pro: single binary, zero runtime deps. Cons: 1-2 minggu rewrite, iterasi tool lebih lambat.
-
-**Opsi B: Bundle Python dengan Nuitka**
-```bash
-pip install nuitka
-cd server
-python -m nuitka --standalone --onefile src/server.py -o codebase-mcp
-# Output: codebase-mcp (single binary, ~50-80MB, no Python needed)
-```
-Pro: tetep Python codebase, jadi single binary. Cons: compile time ~5 menit, binary gede.
-
-**Opsi C: Hybrid (sekarang)** — Build indexer binary, keep Python server.
-```bash
-# Yang lo kirim ke user:
-codebase-mcp-hybrid/
-├── codebase-indexer        # static binary
-├── server/                 # Python source
-└── install.sh              # pip install mcp && cargo build
-```
-
-Rekomendasi: jalanin opsi A kalau udah stabil (tools udah final, nggak sering berubah). Opsi C buat development/iterasi.
-
----
+Paldeck MCP is a **single binary**. No Python. No pip. No runtime dependencies. Just download and configure your agent.
 
 ## Prerequisites
 
-Semua integrasi butuh ini dulu:
-
 ```bash
-# 1. Build Rust indexer
-cd codebase-mcp-hybrid/indexer
+# 1. Download the binary
+# Windows (PowerShell):
+mkdir "$env:USERPROFILE\tools" -Force
+Invoke-WebRequest -Uri "https://github.com/faizalardhi16/paldeck-mcp/releases/download/v0.2.0/paldeck-mcp.exe" -OutFile "$env:USERPROFILE\tools\paldeck-mcp.exe"
+
+# Linux/macOS (build from source):
+git clone https://github.com/faizalardhi16/paldeck-mcp.git
+cd paldeck-mcp
 cargo build --release
-sudo ln -s $(pwd)/target/release/codebase-indexer /usr/local/bin/
+sudo ln -s $(pwd)/target/release/paldeck-mcp /usr/local/bin/
 
-# 2. Install Python deps
-cd codebase-mcp-hybrid/server
-pip install mcp
+# 2. Index your project
+paldeck-mcp index --project /path/to/your/project
 
-# 3. Index project lo
-codebase-indexer --project /path/to/your/project
-
-# 4. Test MCP server jalan
-cd server
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | uv run python -m server
+# 3. Test the server standalone
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | paldeck-mcp serve
+# Should return JSON with 7 tools.
 ```
 
 ---
 
 ## Cursor
 
-Cursor baca MCP config dari `~/.cursor/mcp.json`.
-
-### Config
+Config at `~/.cursor/mcp.json` (Windows: `%USERPROFILE%\.cursor\mcp.json`):
 
 ```json
 {
   "mcpServers": {
-    "codebase": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/root/codebase-mcp-hybrid/server",
-        "codebase-mcp"
-      ],
-      "env": {
-        "PROJECT_ROOT": "/path/to/your/project"
-      }
+    "paldeck": {
+      "command": "paldeck-mcp",
+      "args": ["serve"]
     }
   }
 }
 ```
 
-### Verifikasi
-
-Restart Cursor → buka Settings → MCP → "codebase" harusnya muncul dengan status **Connected** + 7 tools listed.
-
-Di chat Cursor, test:
-```
-search_symbol("validate_email", kind="function")
-```
+**Verification:** Restart Cursor → Settings → MCP → "paldeck" should show **Connected** with 7 tools.
 
 ---
 
 ## Codex CLI (OpenAI)
 
-Codex CLI baca MCP config dari `~/.codex/config.toml`.
-
-### Config
+Config at `~/.codex/config.toml` (Windows: `%USERPROFILE%\.codex\config.toml`):
 
 ```toml
-[mcp_servers.codebase]
-command = "uv"
-args = [
-    "run",
-    "--directory",
-    "/root/codebase-mcp-hybrid/server",
-    "codebase-mcp"
-]
-env = { PROJECT_ROOT = "/path/to/your/project" }
+[mcp_servers.paldeck]
+command = "paldeck-mcp"
+args = ["serve"]
 ```
 
-### Verifikasi
-
+**Verification:**
 ```bash
 codex mcp list
-# Harusnya muncul: codebase (7 tools)
+# paldeck: 7 tools
 
-codex mcp call codebase search_symbol '{"query": "validate_email"}'
+codex mcp call paldeck search_symbols '{"query": "validate_email"}'
 ```
 
 ---
 
 ## Claude Code (Anthropic)
 
-Claude Code baca MCP config dari salah satu:
-- `~/.claude/mcp.json` (versi baru, rekomendasi)
-- `~/.claude.json` → key `mcpServers` (versi lama, fallback)
-
-### Config (`~/.claude/mcp.json`)
+Config at `~/.claude/mcp.json` (Windows: `%USERPROFILE%\.claude\mcp.json`):
 
 ```json
 {
   "mcpServers": {
-    "codebase": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/root/codebase-mcp-hybrid/server",
-        "codebase-mcp"
-      ],
-      "env": {
-        "PROJECT_ROOT": "/path/to/your/project"
-      }
+    "paldeck": {
+      "command": "paldeck-mcp",
+      "args": ["serve"]
     }
   }
 }
 ```
 
-### Config alternatif: tanpa `uv` (kalau udah install via pip)
+> **Note:** Claude Code also reads `~/.claude.json` → key `mcpServers` (legacy format). Prefer `~/.claude/mcp.json` for the newer path.
 
-```json
-{
-  "mcpServers": {
-    "codebase": {
-      "command": "python",
-      "args": [
-        "-m",
-        "server"
-      ],
-      "cwd": "/root/codebase-mcp-hybrid/server/src",
-      "env": {
-        "PROJECT_ROOT": "/path/to/your/project"
-      }
-    }
-  }
-}
-```
-
-### Verifikasi
-
+**Verification:**
 ```bash
 claude mcp list
-# codebase: 7 tools
+# paldeck: 7 tools
 ```
-
-Di Claude Code session:
-```
-> Find where email validation happens in this project
-```
-
-Claude akan otomatis manggil `mcp__codebase__search_symbol` sebelum buka file satu-satu.
 
 ---
 
-## Hermes Agent (built-in)
+## Hermes Agent
 
-Hermes punya MCP client native. Config di `~/.hermes/config.yaml`.
-
-### Config
+Config at `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
-  codebase:
-    command: "uv"
-    args:
-      - "run"
-      - "--directory"
-      - "/root/codebase-mcp-hybrid/server"
-      - "codebase-mcp"
-    timeout: 30
-    env:
-      PROJECT_ROOT: "/path/to/your/project"
-```
-
-### Kalau udah dibundle jadi single binary (Opsi B — Nuitka)
-
-```yaml
-mcp_servers:
-  codebase:
-    command: "/usr/local/bin/codebase-mcp"
-    args: []
+  paldeck:
+    command: "paldeck-mcp"
+    args: ["serve"]
     timeout: 30
 ```
 
-### Verifikasi
-
-Restart Hermes → startup log harusnya muncul:
+**Verification:** Restart Hermes → startup log should show:
 ```
-[MCP] Connected to 'codebase': 7 tools discovered
-[MCP] Registered mcp_codebase_search_symbol
-[MCP] Registered mcp_codebase_trace_callers
+[MCP] Connected to 'paldeck': 7 tools discovered
+[MCP] Registered mcp_paldeck_search_symbols
+[MCP] Registered mcp_paldeck_find_callers
 ...
 ```
 
-Test:
-```
-> search_symbol query="createUser"
-```
-
 ---
 
-## Per-Project Config Pattern
+## Per-Project Setup Pattern
 
-Biar nggak hardcode `PROJECT_ROOT`, lo bisa bikin wrapper script per project:
-
-```bash
-# ~/projects/my-api/.codebase-mcp.sh
-#!/bin/bash
-export PROJECT_ROOT="$(dirname "$0")"
-exec uv run --directory /root/codebase-mcp-hybrid/server codebase-mcp
-```
-
-Lalu di semua agent config:
-
-```json
-{
-  "mcpServers": {
-    "codebase": {
-      "command": "/home/faizal/projects/my-api/.codebase-mcp.sh"
-    }
-  }
-}
-```
-
-Atau — approach yang lebih clean — bikin `codebase-indexer` jalan di repo root, dan MCP server auto-detect `index.db` di current directory:
+Run the indexer in any project directory:
 
 ```bash
-# Di root project manapun:
-cd /path/to/project
-codebase-indexer --project .     # creates ./index.db
-codebase-mcp                     # auto-discovers ./index.db
+cd /path/to/any-project
+paldeck-mcp index --project .
+# Creates: ./index.db
 ```
 
-Server udah support ini — `discover_db()` di `server.py` akan nyari `index.db` di working directory.
+When `paldeck-mcp serve` runs, it auto-discovers `index.db` in the current working directory. This means you can keep the same agent config and just change directories:
+
+```bash
+cd ~/projects/api-server
+paldeck-mcp index --project .
+paldeck-mcp serve     # serves api-server's index.db
+
+cd ~/projects/frontend
+paldeck-mcp index --project .
+paldeck-mcp serve     # serves frontend's index.db
+```
+
+No config changes needed — the server reads `./index.db` by default.
 
 ---
 
 ## Troubleshooting
 
-### "codebase-indexer: command not found"
+### "paldeck-mcp: command not found"
 
-```bash
-which codebase-indexer
-# Kalau kosong:
-cd codebase-mcp-hybrid/indexer
-cargo build --release
-sudo ln -s $(pwd)/target/release/codebase-indexer /usr/local/bin/
+The binary isn't on PATH. Use the full path in your MCP config:
+
+```json
+{"command": "C:\\Users\\faizal.cahyanto-iu\\tools\\paldeck-mcp.exe", "args": ["serve"]}
 ```
 
-### "No module named 'mcp'"
+or
 
-```bash
-pip install mcp
-# atau
-uv pip install mcp
+```json
+{"command": "/usr/local/bin/paldeck-mcp", "args": ["serve"]}
 ```
 
 ### "No index found at index.db"
 
-Indexer belum dijalanin. Jalankan dulu:
+Run the indexer first:
 ```bash
-codebase-indexer --project /path/to/project
+paldeck-mcp index --project /path/to/project
 ```
 
-### "Connection refused" atau tool nggak muncul
+### Agent shows "Disconnected" or tools don't appear
 
-1. Cek MCP server bisa jalan standalone:
+1. Test the server standalone:
    ```bash
-   echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | uv run --directory server codebase-mcp
+   echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | paldeck-mcp serve
    ```
-2. Harusnya return JSON list of 7 tools.
-3. Kalau hang — kemungkinan `mcp` package version mismatch. Coba `pip install --upgrade mcp`.
+2. Should return a JSON list of 7 tools.
+3. If it hangs or errors, check that `index.db` exists in the current directory (or pass `--db` flag).
 
-### Cursor: MCP server status "Disconnected" terus
+### Cursor: MCP server stuck on "Disconnected"
 
-1. Buka Cursor → Help → Toggle Developer Tools
-2. Console tab → cari error terkait MCP
-3. Biasanya: Python path nggak ketemu. Coba full path:
-   ```json
-   "command": "/home/faizal/.local/bin/uv"
-   ```
+1. Open Cursor → Help → Toggle Developer Tools
+2. Check the Console tab for MCP-related errors
+3. Common fix: use the full path to the binary in the config.
+
+### Windows: "VCRUNTIME140.dll not found"
+
+Install Visual C++ Redistributable:
+```
+https://aka.ms/vs/17/release/vc_redist.x64.exe
+```
+
+### Windows: "Access denied" on .exe
+
+Right-click `paldeck-mcp.exe` → Properties → Unblock (if the checkbox is visible).
+
+### Windows: Anti-virus blocking
+
+Windows Defender sometimes flags new binaries. Upload to VirusTotal for verification, or add an exclusion for the tools folder.
