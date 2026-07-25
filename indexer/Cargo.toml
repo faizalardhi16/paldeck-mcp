@@ -1,0 +1,32 @@
+[package]
+name = "codebase-indexer"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance codebase AST indexer — parses source into a SQLite knowledge graph"
+
+[[bin]]
+name = "codebase-indexer"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tree-sitter = "0.25"
+tree-sitter-python = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-go = "0.25"
+petgraph = "0.6"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+ignore = "0.4"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

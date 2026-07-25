@@ -1,0 +1,16 @@
+[project]
+name = "codebase-mcp-server"
+version = "0.1.0"
+description = "MCP server that reads the Rust-indexed codebase knowledge graph"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "networkx>=3.0",
+]
+
+[project.scripts]
+codebase-mcp = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,16 @@
+# Rust build artifacts
+indexer/target/
+
+# Python artifacts
+server/__pycache__/
+server/src/__pycache__/
+server/.venv/
+*.egg-info/
+
+# Generated index files
+index.db
+*.db
+
+# OS noise
+.DS_Store
+Thumbs.db
