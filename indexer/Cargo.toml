@@ -1,11 +1,11 @@
 [package]
-name = "codebase-indexer"
-version = "0.1.0"
+name = "codebase-mcp"
+version = "0.2.0"
 edition = "2021"
-description = "High-performance codebase AST indexer — parses source into a SQLite knowledge graph"
+description = "Single-binary codebase indexer + MCP server. Index your code, serve it to AI agents. Python, TypeScript, Rust, Go."
 
 [[bin]]
-name = "codebase-indexer"
+name = "codebase-mcp"
 path = "src/main.rs"
 
 [dependencies]
@@ -24,6 +24,9 @@ ignore = "0.4"
 anyhow = "1"
 log = "0.4"
 env_logger = "0.11"
+tokio = { version = "1", features = ["full"] }
+rmcp = { version = "3.0.0-beta.2", features = ["server", "transport-async-rw"] }
+schemars = "1"
 
 [profile.release]
 opt-level = 3

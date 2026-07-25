@@ -1,88 +1,103 @@
-//! # Codebase Indexer — CLI Entry Point
+//! # Codebase MCP — Single binary for indexing + serving
 //!
-//! Orchestrates the full indexing pipeline:
-//!   1. Walk the project (walker)
-//!   2. Parse each source file (parser)
-//!   3. Build the in-memory graph (graph)
-//!   4. Persist to SQLite (storage)
+//! Two modes:
+//!   codebase-mcp index --project /path   → build SQLite knowledge graph
+//!   codebase-mcp serve                   → start MCP server (reads index.db)
 
 mod walker;
 mod parser;
 mod graph;
 mod storage;
+mod server;
 
-use clap::Parser;
-use anyhow::Result;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-/// High-performance AST-based codebase indexer.
-///
-/// Builds a knowledge graph of symbols (functions, classes, methods, routes)
-/// and their relationships (calls, imports, inheritance) into SQLite.
 #[derive(Parser)]
-#[command(name = "codebase-indexer")]
+#[command(name = "codebase-mcp", about = "Single-binary codebase indexer + MCP server")]
 struct Cli {
-    /// Root of the project to index
-    #[arg(short, long)]
-    project: PathBuf,
-
-    /// Output SQLite database path (default: index.db in project root)
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    /// Verbose logging (-v, -vv)
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn main() -> Result<()> {
+#[derive(Subcommand)]
+enum Command {
+    /// Index a project — parse source files into SQLite knowledge graph
+    Index {
+        /// Root of the project to index
+        #[arg(short, long)]
+        project: PathBuf,
+
+        /// Output SQLite database path (default: index.db in project root)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Verbose logging (-v, -vv)
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbose: u8,
+    },
+    /// Start MCP server — serve the indexed codebase to AI agents over stdio
+    Serve {
+        /// Path to index.db (default: ./index.db)
+        #[arg(short, long, default_value = "index.db")]
+        db: PathBuf,
+    },
+}
+
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Init logging
-    let log_level = match cli.verbose {
-        0 => "info",
-        1 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
+    match cli.command {
+        Command::Index { project, output, verbose } => {
+            let log_level = match verbose {
+                0 => "info",
+                1 => "debug",
+                _ => "trace",
+            };
+            env_logger::Builder::from_env(
+                env_logger::Env::default().default_filter_or(log_level)
+            ).init();
 
-    let output = cli.output.unwrap_or_else(|| cli.project.join("index.db"));
+            let output = output.unwrap_or_else(|| project.join("index.db"));
+            log::info!("🔍 Walking project: {}", project.display());
 
-    log::info!("🔍 Walking project: {}", cli.project.display());
+            let files = walker::discover_source_files(&project)?;
+            log::info!("   Found {} source files", files.len());
 
-    // Step 1: Discover source files
-    let files = walker::discover_source_files(&cli.project)?;
-    log::info!("   Found {} source files", files.len());
+            let mut all_symbols = Vec::new();
+            let mut all_edges = Vec::new();
 
-    // Step 2: Parse each file, extract symbols
-    let mut all_symbols = Vec::new();
-    let mut all_edges = Vec::new();
-
-    for file_path in &files {
-        let source = std::fs::read_to_string(file_path)?;
-        let relative = file_path.strip_prefix(&cli.project).unwrap_or(file_path);
-
-        match parser::parse_file(relative, &source, file_path) {
-            Ok((mut symbols, edges)) => {
-                log::debug!("   {} → {} symbols, {} edges", relative.display(), symbols.len(), edges.len());
-                all_symbols.append(&mut symbols);
-                all_edges.extend(edges);
+            for file_path in &files {
+                let source = std::fs::read_to_string(file_path)?;
+                let relative = file_path.strip_prefix(&project).unwrap_or(file_path);
+                match parser::parse_file(relative, &source, file_path) {
+                    Ok((mut syms, es)) => {
+                        log::debug!("   {} → {} symbols, {} edges", relative.display(), syms.len(), es.len());
+                        all_symbols.append(&mut syms);
+                        all_edges.extend(es);
+                    }
+                    Err(e) => {
+                        log::warn!("   ⚠ {} — parse error: {}", relative.display(), e);
+                    }
+                }
             }
-            Err(e) => {
-                log::warn!("   ⚠ {} — parse error: {}", relative.display(), e);
-            }
+
+            log::info!("📊 Extracted {} symbols, {} edges", all_symbols.len(), all_edges.len());
+            let g = graph::CodeGraph::build(&all_symbols, &all_edges);
+            log::info!("🌐 Graph built: {} nodes", g.node_count());
+            storage::persist(&output, &g, &project, files.len())?;
+            log::info!("💾 Persisted to {}", output.display());
+        }
+
+        Command::Serve { db } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(async {
+                if let Err(e) = server::run_server(db).await {
+                    eprintln!("Server error: {}", e);
+                }
+            });
         }
     }
-
-    log::info!("📊 Extracted {} symbols, {} edges", all_symbols.len(), all_edges.len());
-
-    // Step 3: Build in-memory petgraph for cross-file edge resolution
-    let g = graph::CodeGraph::build(&all_symbols, &all_edges);
-    log::info!("🌐 Graph built: {} nodes", g.node_count());
-
-    // Step 4: Persist to SQLite
-    storage::persist(&output, &g, &cli.project, files.len())?;
-    log::info!("💾 Persisted to {}", output.display());
 
     Ok(())
 }
