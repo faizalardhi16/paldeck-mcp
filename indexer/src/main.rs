@@ -1,8 +1,8 @@
 //! # Paldeck MCP — Single binary for indexing + serving
 //!
 //! Two modes:
-//!   paldeck-mcp index --project /path   → build SQLite knowledge graph
-//!   paldeck-mcp serve                   → start MCP server (reads index.db)
+//!   paldeck-mcp index --project /path --scope src/auth  → index a module
+//!   paldeck-mcp serve                                    → start MCP server (reads index.db)
 
 mod walker;
 mod parser;
@@ -28,6 +28,10 @@ enum Command {
         #[arg(short, long)]
         project: PathBuf,
 
+        /// Only index files under this subdirectory (e.g., "src/auth")
+        #[arg(short, long)]
+        scope: Option<PathBuf>,
+
         /// Output SQLite database path (default: index.db in project root)
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -48,7 +52,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Index { project, output, verbose } => {
+        Command::Index { project, scope, output, verbose } => {
             let log_level = match verbose {
                 0 => "info",
                 1 => "debug",
@@ -59,9 +63,13 @@ fn main() -> anyhow::Result<()> {
             ).init();
 
             let output = output.unwrap_or_else(|| project.join("index.db"));
-            log::info!("🔍 Walking project: {}", project.display());
+            if let Some(ref s) = scope {
+                log::info!("🔍 Walking project: {} (scope: {})", project.display(), s.display());
+            } else {
+                log::info!("🔍 Walking project: {}", project.display());
+            }
 
-            let files = walker::discover_source_files(&project)?;
+            let files = walker::discover_source_files(&project, scope.as_deref())?;
             log::info!("   Found {} source files", files.len());
 
             let mut all_symbols = Vec::new();

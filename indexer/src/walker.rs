@@ -19,8 +19,13 @@ const SKIP_DIRS: &[&str] = &[
 ];
 
 /// Walk the project root and return all parseable source file paths.
-pub fn discover_source_files(root: &Path) -> Result<Vec<PathBuf>> {
+/// If `scope` is provided, only files under that subdirectory are discovered.
+pub fn discover_source_files(root: &Path, scope: Option<&Path>) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
+
+    let scope_abs = scope.map(|s| {
+        if s.is_absolute() { s.to_path_buf() } else { root.join(s) }
+    });
 
     // `ignore::Walk` automatically respects `.gitignore` and skips common
     // build-artifact directories (node_modules, target, etc.) out of the box.
@@ -30,6 +35,13 @@ pub fn discover_source_files(root: &Path) -> Result<Vec<PathBuf>> {
 
         if path.is_dir() {
             continue;
+        }
+
+        // Scope filter: skip files outside the target subdirectory
+        if let Some(ref scope_path) = scope_abs {
+            if !path.starts_with(scope_path) {
+                continue;
+            }
         }
 
         // Check extension
