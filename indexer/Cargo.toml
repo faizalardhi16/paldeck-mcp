@@ -1,6 +1,6 @@
 [package]
 name = "paldeck-mcp"
-version = "0.2.0"
+version = "0.2.3"
 edition = "2021"
 description = "Paldeck MCP — single-binary codebase indexer + MCP server. Index your code, serve it to AI agents. Python, TypeScript, Rust, Go."
 

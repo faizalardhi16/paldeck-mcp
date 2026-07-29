@@ -12,6 +12,9 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// Shared state — holds the open SQLite connection
 pub struct AppState {
@@ -366,6 +369,44 @@ impl AppState {
     }
 }
 
+// ── Auto-flush stdout for MCP transport ──────────────────────────
+///
+/// When stdout is piped (Cursor MCP scenario), Rust fully buffers
+/// writes by default. Cursor reads stdout line-by-line and expects
+/// immediate JSON-RPC responses. This wrapper flushes after every
+/// write so MCP handshake + tools/list don't get stuck in the buffer.
+struct FlushingWriter<W: AsyncWrite + Unpin> {
+    inner: W,
+}
+
+impl<W: AsyncWrite + Unpin> AsyncWrite for FlushingWriter<W> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let result = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if let Poll::Ready(Ok(_)) = &result {
+            let _ = Pin::new(&mut self.inner).poll_flush(cx);
+        }
+        result
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
 // ── Entry point for `serve` subcommand ────────────────────────────
 
 pub async fn run_server(
@@ -379,10 +420,13 @@ pub async fn run_server(
         db_path,
     };
 
-    let transport = (tokio::io::stdin(), tokio::io::stdout());
+    // Wrap stdout in auto-flush adapter to fix Cursor MCP buffering.
+    // Without this, piped stdout is fully buffered (4KB) and Cursor
+    // sees 0 tools because JSON responses never reach the pipe.
+    let transport = (tokio::io::stdin(), FlushingWriter { inner: tokio::io::stdout() });
     eprintln!("[paldeck-mcp] MCP server starting on stdio...");
     let service = state.serve(transport).await?;
-    eprintln!("[paldeck-mcp] Connected. 8 tools registered.");
+    eprintln!("[paldeck-mcp] Connected. 7 tools registered.");
     service.waiting().await;
     Ok(())
 }
